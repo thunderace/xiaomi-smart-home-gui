@@ -17,19 +17,19 @@ var MHeartbeat = require("./mongo_models/heartbeats")(mongoose);
 function printLog(json) {
   var model = json['model'];
   var data = JSON.parse(json['data']);
-  if (model === 'sensor_ht') {
+  if (model === 'sensor_ht' || model == 'weather.v1') {
     var temperature = data['temperature'] ? data['temperature'] / 100.0 : 100;
     var humidity = data['humidity'] ? data['humidity'] / 100.0 : 0;
     console.log("Step 7. Got temperature/humidity sensor:%s's heartbeat: temperature %d, humidity %d", json['sid'], temperature, humidity);
-  } else if (model === 'motion') {
+  } else if (model === 'motion' || model == 'sensor_motion.aq2') {
     console.log("Step 7. Got motion sensor:%s's heartbeat: move %s", json['sid'], (data['status'] === 'motion') ? 'detected' : 'not detected');
-  } else if (model === 'magnet') {
+  } else if (model === 'magnet' || model == 'sensor_magnet.aq2') {
     console.log("Step 7. Got contact/magnet sensor:%s's heartbeat: contact %s", json['sid'], (data['status'] === 'close') ? 'detected' : 'not detected');
   } else if (model === 'ctrl_neutral1') {
     console.log("Step 7. Got light switch:%s's heartbeat: %s", json['sid'], data['channel_0']);
   } else if (model === 'ctrl_neutral2') {
     console.log("Step 7. Got duplex light switch:%s's heartbeat: left %s, right %s", json['sid'], data['channel_0'], data['channel_1']);
-  } else if (model == 'sensor_switch.aq2') {
+  } else if (model == 'switch' || model == 'sensor_switch.aq2' || model == '86sw2') {
     console.log("Step 7. Got switch:%s's heartbeat:%s with voltage:%s", json['sid'], json['data'], data['voltage']);
   } else if (model === 'cube') {
     console.log("Step 7. Got cube:%s's heartbeat:%s with voltage:%s", json['sid'], json['data'], data['voltage']);
@@ -37,6 +37,7 @@ function printLog(json) {
     console.log("Step 7. Got gateway:%s's heartbeat:%s with token:%s", json['sid'], json['data'], json['token']);
   } else {
     console.log("Step XXXXXXX. Got %s:%s's heartbeat:%s", json['model'], json['sid'], json['data']);
+    console.log('json dump : ' + JSON.stringify(json));
   }
 }
 
@@ -56,7 +57,11 @@ function popInterestingEvent(json){
     cmd: json['cmd'],
     data: JSON.parse(json['data'])
   });
-  evenement.save(function(result){console.log(result)});
+  evenement.save(function (err) {
+    if (err) {
+      console.log('mongodb save Event (result) : ' + err);
+    } 
+  });
 }
 
 function updateHeartbeatState(json,type=""){
@@ -89,7 +94,11 @@ function updateHeartbeatState(json,type=""){
             return true;
           }
           //si oui on update la date de updatedAt
-          hb.save();
+          hb.save(function (err) {
+            if (err) {
+              console.log('mongodb save HB (result) : ' + err);
+            } 
+          });
         } else {
           //on pop un event (le changement d'etat) sauf pour les sensor de temperature
           if(json['model']!=="sensor_ht") {
@@ -97,7 +106,11 @@ function updateHeartbeatState(json,type=""){
           }
           //on ferme l'interval
           hb.interval_end_date = now;
-          hb.save();
+          hb.save(function (err) {
+            if (err) {
+              console.log('mongodb save HB (result) : ' + err);
+            } 
+          });
           //puis on crée un nouveau avec les new data
           neednew = true;
         }
@@ -112,7 +125,11 @@ function updateHeartbeatState(json,type=""){
           data: JSON.parse(json['data']) ,
           interval_begin_date: now
         });
-        HB.save();
+        HB.save(function (err) {
+          if (err) {
+            console.log('mongodb save HB (result) : ' + err);
+          } 
+        });
       }
   });
 }
@@ -139,7 +156,8 @@ serverSocket.on('message', function(msg, rinfo){
     //et on enregistre la gateway
     MDevice.find({sid: json['sid']},function(error,gtw){
       if(error){
-        console.error(error);
+        console.error('MDevice gateway error : ' + error);
+        return;
       }
       if(gtw === null){
         var dev = new MDevice({
@@ -147,50 +165,64 @@ serverSocket.on('message', function(msg, rinfo){
           name: "Unknown Gateway",
           model: "gateway"
         });
-        dev.save();
+        dev.save(function (err) {
+            if (err) {
+              console.log('mongodb save Device (result) : ' + err);
+            } 
+          });
       }
     });
 
 
     console.log('Step 3. Send %s to %s:%d', cmd, address, port);
-    console.log(iam.toString('hex'));
+    console.log('iam : ' + iam.toString('hex'));
     serverSocket.send(iam, 0, iam.length, port, address);
   }else if (cmd === 'get_id_list_ack') { //reception de la liste des devices d'un hub
+    console.log ('get_id_list_ack dump : ' + JSON.stringify(json));
     var data = JSON.parse(json['data']);
-    for(var index in data) {
-      var dsid = data[index];
-      //on insere les nouvelles devices
-      MDevice.findOne({sid: dsid },function(error,dev){
+    data.forEach(function(dsid) {
+      //on insere les nouveaux devices
+      MDevice.findOne({sid: dsid },function(error,dev) {
         if(error){
           console.error(error);
         }
         if(dev === null){
+          console.log('create device (' + dsid +')');
           dev = new MDevice({
             sid: dsid,
             name: "Unknown Device"
           });
-          dev.save();
+          dev.save(function (err) {
+            if (err) {
+              console.log('mongodb save Device (result) : ' + err);
+            }
+            //on demande a chaque device son etat
+            var response = '{"cmd":"read", "sid":"' + dsid + '"}';
+            // on stocke l'ip/port de la gateway sur laquel on peut contacter ce device
+            sidToAddress[dsid] = rinfo.address;
+            sidToPort[dsid] = rinfo.port;
+            console.log('Step 4. Send %s to %s:%d', response, rinfo.address, rinfo.port);
+            serverSocket.send(response, 0, response.length, rinfo.port, rinfo.address);
+          });
         }
-      })
+      });
 
-      //on demande a chaque device son etat
-      var response = '{"cmd":"read", "sid":"' + dsid + '"}';
-      // on stoque l'ip/port de la gateway sur laquel on peut contacté ce device
-      sidToAddress[dsid] = rinfo.address;
-      sidToPort[dsid] = rinfo.port;
-
-      console.log('Step 4. Send %s to %s:%d', response, rinfo.address, rinfo.port);
-      serverSocket.send(response, 0, response.length, rinfo.port, rinfo.address);
-    }
+    });
   } else if (cmd === 'read_ack' || cmd === 'report' || cmd === 'heartbeat') { //on recois l'etat d'une device par demande du logger, un push, ou un ping
     if (cmd === 'read_ack') {
       //on update ici le model des devices car on a demandé un etat des lieux
-      console.log('read ack... updating model for '+json['sid']+" -> "+json['model'])
+      console.log('read ack... updating model for '+json['sid']+" -> "+json['model']);
       MDevice.findOne({sid: json['sid']}, function (err, dev) {
-        if (err) console.log(err);
+        if (err) console.log('MDevice.findOne error : ' + err);
         if(dev){
           dev.model = json['model'];
-          dev.save()
+          dev.save(function (err) {
+            if (err) {
+              console.log('mongodb save Device (result) : ' + err);
+            } 
+          });
+        } else {
+          console.log('read ack... updating model for '+json['sid']+" -> "+json['model'] + ' FAILED ########################################');
         }
       });
     }
@@ -234,7 +266,7 @@ serverSocket.on('error', function(err){
 serverSocket.on('listening', function(){
   console.log('Step 1. Start a UDP server, listening on port %d.', serverPort);
   serverSocket.addMembership(multicastAddress);
-})
+});
 
 console.log('Demo server, in the following steps:');
 
