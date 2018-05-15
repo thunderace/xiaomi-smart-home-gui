@@ -14,7 +14,7 @@ var MDevice = require("./mongo_models/devices")(mongoose);
 var MHeartbeat = require("./mongo_models/heartbeats")(mongoose);
 
 //interprete les log en fonctions du type
-function printLog(json){
+function printLog(json) {
   var model = json['model'];
   var data = JSON.parse(json['data']);
   if (model === 'sensor_ht') {
@@ -29,10 +29,14 @@ function printLog(json){
     console.log("Step 7. Got light switch:%s's heartbeat: %s", json['sid'], data['channel_0']);
   } else if (model === 'ctrl_neutral2') {
     console.log("Step 7. Got duplex light switch:%s's heartbeat: left %s, right %s", json['sid'], data['channel_0'], data['channel_1']);
+  } else if (model == 'sensor_switch.aq2') {
+    console.log("Step 7. Got switch:%s's heartbeat:%s with voltage:%s", json['sid'], json['data'], data['voltage']);
+  } else if (model === 'cube') {
+    console.log("Step 7. Got cube:%s's heartbeat:%s with voltage:%s", json['sid'], json['data'], data['voltage']);
   } else if (model === 'gateway') {
     console.log("Step 7. Got gateway:%s's heartbeat:%s with token:%s", json['sid'], json['data'], json['token']);
   } else {
-    console.log("Step 7. Got %s:%s's heartbeat:%s", json['model'], json['sid'], json['data']);
+    console.log("Step XXXXXXX. Got %s:%s's heartbeat:%s", json['model'], json['sid'], json['data']);
   }
 }
 
@@ -52,17 +56,15 @@ function popInterestingEvent(json){
     cmd: json['cmd'],
     data: JSON.parse(json['data'])
   });
-  evenement.save(function(result){console.log(result)});;
+  evenement.save(function(result){console.log(result)});
 }
 
 function updateHeartbeatState(json,type=""){
   //ici on retire ce qui n'est pas un heartbeat
-  if(
-    json['model'] === "switch"
-  ){
+  if(json['model'] === "switch") {
     //mais si c'est interessant on pop quand meme un evenement
     //ici si on clic un bouton
-    if(json['model'] === "switch" && json['data'] !== "{}"){
+    if(json['model'] === "switch" && json['data'] !== "{}") {
       popInterestingEvent(json);
     }
     return true;
@@ -71,16 +73,16 @@ function updateHeartbeatState(json,type=""){
   //recupere le dernier heartbeat de ce device
   MHeartbeat.findOne({sid: json['sid'], data_type: type, is_last_state: true },function(err, hb) {
       var now = Date.now();//on fixe la microseconde
-      if(err){
+      if(err) {
         console.error(err);
         return true;
       }
       //si aucune ligne
       var neednew = false;
       //si on a deja une ligne
-      if(hb !== null){
+      if(hb !== null) {
         //on verifie si data sont les memes
-        if( JSON.stringify(hb.data) === json['data'] ){
+        if(JSON.stringify(hb.data) === json['data'] ) {
           //filtre sur les devices qui bougent trop souvent
           let miniDelay = 60*5;
           if(json['model']==="sensor_ht" && (hb.interval_begin_date + miniDelay) < now ){
@@ -88,11 +90,9 @@ function updateHeartbeatState(json,type=""){
           }
           //si oui on update la date de updatedAt
           hb.save();
-        }
-        //si non
-        else{
+        } else {
           //on pop un event (le changement d'etat) sauf pour les sensor de temperature
-          if(json['model']!=="sensor_ht"){
+          if(json['model']!=="sensor_ht") {
             popInterestingEvent(json);
           }
           //on ferme l'interval
@@ -117,7 +117,7 @@ function updateHeartbeatState(json,type=""){
   });
 }
 
-//exemple de messega recu:
+//exemple de message recu:
 //{"cmd":"heartbeat","model":"gateway","sid":"f0b4299a63d9","short_id":"0","token":"1hX9gW20eIkqZRlY","data":"{\"ip\":\"192.168.0.12\"}"}
 serverSocket.on('message', function(msg, rinfo){
   console.log('recv %s(%d bytes) from client %s:%d\n', msg, msg.length, rinfo.address, rinfo.port);
@@ -135,7 +135,7 @@ serverSocket.on('message', function(msg, rinfo){
     var address = json['ip'];
     var port = json['port'];
     //on lui demande la liste de ses devices
-    var cmd = '{"cmd":"get_id_list"}';
+    var iam = '{"cmd":"get_id_list"}';
     //et on enregistre la gateway
     MDevice.find({sid: json['sid']},function(error,gtw){
       if(error){
@@ -149,14 +149,13 @@ serverSocket.on('message', function(msg, rinfo){
         });
         dev.save();
       }
-    })
+    });
 
 
     console.log('Step 3. Send %s to %s:%d', cmd, address, port);
-    serverSocket.send(cmd, 0, cmd.length, port, address);
-  }
-  //reception de la liste des devices d'un hub
-  else if (cmd === 'get_id_list_ack') {
+    console.log(iam.toString('hex'));
+    serverSocket.send(iam, 0, iam.length, port, address);
+  }else if (cmd === 'get_id_list_ack') { //reception de la liste des devices d'un hub
     var data = JSON.parse(json['data']);
     for(var index in data) {
       var dsid = data[index];
@@ -183,9 +182,7 @@ serverSocket.on('message', function(msg, rinfo){
       console.log('Step 4. Send %s to %s:%d', response, rinfo.address, rinfo.port);
       serverSocket.send(response, 0, response.length, rinfo.port, rinfo.address);
     }
-  }
-  //on recois l'etat d'une device par demande du logger, un push, ou un ping
-  else if (cmd === 'read_ack' || cmd === 'report' || cmd === 'heartbeat') {
+  } else if (cmd === 'read_ack' || cmd === 'report' || cmd === 'heartbeat') { //on recois l'etat d'une device par demande du logger, un push, ou un ping
     if (cmd === 'read_ack') {
       //on update ici le model des devices car on a demandé un etat des lieux
       console.log('read ack... updating model for '+json['sid']+" -> "+json['model'])
@@ -210,15 +207,11 @@ serverSocket.on('message', function(msg, rinfo){
         copy['data'] = JSON.stringify(datadec['humidity']);
         updateHeartbeatState(copy,'humidity');
       }
-    }
-    //sinon on enregistre tout
-    else{
+    } else { //sinon on enregistre tout
       updateHeartbeatState(json,'');//necessaire pour le motion (entre autre), mais a eviter pour le button
     }
     printLog(json);
-  }
-  //ici on se sert du logger pour passer des command a la gateway correspondant au bon sid
-  else if (cmd === 'write') {
+  } else if (cmd === 'write') { //ici on se sert du logger pour passer des command a la gateway correspondant au bon sid
     // Commands from udpclient.js, pass them to gateway
     var sid = json['sid'];
     if (!sid || !sidToPort[sid] || !sidToAddress[sid]) {

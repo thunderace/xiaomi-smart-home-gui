@@ -22,6 +22,6 @@ fs.readdirSync(__dirname+"/mongo_models")
     koaRestMongoose(app,router,model,"/api");
   });
 
-app.listen(3000);
+app.listen(3013);
 
-console.log('listening on port 3000');
+console.log('listening on port 3013');
